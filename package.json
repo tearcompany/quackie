@@ -1,0 +1,132 @@
+{
+  "name": "quackie",
+  "displayName": "Quackie",
+  "description": "Personality-first rewrite runtime for VS Code",
+  "version": "0.2.0",
+  "publisher": "quackie",
+  "icon": "icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "extensionDependencies": [
+    "vscode.git"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "quackie.selectPersona",
+        "title": "Quackie: Select Persona"
+      },
+      {
+        "command": "quackie.reloadPersonas",
+        "title": "Quackie: Reload Personas"
+      },
+      {
+        "command": "quackie.toggleAutoRewrite",
+        "title": "Quackie: Toggle Auto Rewrite"
+      },
+      {
+        "command": "quackie.rewriteNow",
+        "title": "Quackie: Rewrite Now"
+      },
+      {
+        "command": "quackie.commitWithPersona",
+        "title": "Quackie: Commit with Persona"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "quackie.commitWithPersona",
+        "key": "ctrl+alt+enter",
+        "mac": "cmd+alt+enter",
+        "when": "scmProvider == git"
+      }
+    ],
+    "configuration": {
+      "title": "Quackie",
+      "properties": {
+        "quackie.persona": {
+          "type": "string",
+          "default": "",
+          "description": "Active persona id"
+        },
+        "quackie.autoRewrite": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically rewrite commit messages as you type"
+        },
+        "quackie.debounceMs": {
+          "type": "number",
+          "default": 500,
+          "minimum": 100,
+          "description": "Debounce delay in milliseconds before rewriting"
+        },
+        "quackie.rewriteEngine": {
+          "type": "string",
+          "enum": [
+            "mock",
+            "quackie"
+          ],
+          "enumDescriptions": [
+            "Deterministic offline rewrite, no network calls",
+            "Rewrite via the hosted Quackie API (quackie.apiUrl) — no API key required"
+          ],
+          "default": "quackie",
+          "description": "Rewrite engine used to generate persona-styled text"
+        },
+        "quackie.apiUrl": {
+          "type": "string",
+          "default": "https://quackie.me/api/rewrite",
+          "description": "Quackie backend endpoint used by the quackie rewrite engine"
+        },
+        "quackie.enabledTargets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "commit",
+              "pull-request",
+              "code-review",
+              "release-notes",
+              "branch-name",
+              "changelog"
+            ]
+          },
+          "default": [
+            "commit"
+          ],
+          "description": "Rewrite targets enabled for the runtime"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "node scripts/sync-personas.js && npm run check-types && node esbuild.js",
+    "check-types": "tsc --noEmit",
+    "test": "npm run check-types && tsc -p tsconfig.test.json && node --test out-test/**/*.test.js",
+    "watch": "node scripts/sync-personas.js && npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch",
+    "package": "node scripts/sync-personas.js && npm run check-types && node esbuild.js --production",
+    "sync-personas": "node scripts/sync-personas.js",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "yaml": "^2.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.25.5",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.8.3"
+  }
+}
