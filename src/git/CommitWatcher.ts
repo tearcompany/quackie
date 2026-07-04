@@ -4,15 +4,19 @@ import { PersonaRecentStore } from '../personas/PersonaRecentStore';
 import { PersonaRegistry } from '../personas/PersonaRegistry';
 import { RewriteService } from '../rewrite/RewriteService';
 import { RewriteFeedback } from '../ui/RewriteFeedback';
+import { showRewriteError } from '../ui/showRewriteError';
 import { Repository } from './api/git';
 
 const POLL_INTERVAL_MS = 150;
+const MIN_DEBOUNCE_MS = 250;
 
 export class CommitWatcher implements vscode.Disposable {
   private lastSeenValue = '';
   private lastOriginal = '';
   private lastGenerated = '';
+  private frozen = false;
   private isUpdating = false;
+  private generation = 0;
   private debounceTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly pollInterval: ReturnType<typeof setInterval>;
   private readonly disposables: vscode.Disposable[] = [];
@@ -35,17 +39,31 @@ export class CommitWatcher implements vscode.Disposable {
     );
   }
 
+  markGenerated(text: string): void {
+    this.lastGenerated = text;
+    this.lastSeenValue = text;
+    this.lastOriginal = text;
+    this.frozen = false;
+    this.clearDebounce();
+  }
+
   async rewriteNow(): Promise<void> {
+    if (this.isUpdating) {
+      return;
+    }
+
     const current = this.repository.inputBox.value.trim();
     if (!current) {
       return;
     }
 
+    this.frozen = false;
     this.clearDebounce();
     await this.performRewrite(current);
   }
 
   dispose(): void {
+    this.generation += 1;
     this.clearDebounce();
     clearInterval(this.pollInterval);
     for (const disposable of this.disposables) {
@@ -63,22 +81,43 @@ export class CommitWatcher implements vscode.Disposable {
       return;
     }
 
-    this.lastSeenValue = current;
-
     if (!current.trim()) {
+      this.lastSeenValue = current;
       this.resetState();
       return;
     }
 
     if (current === this.lastGenerated) {
+      this.lastSeenValue = current;
       return;
     }
+
+    if (
+      this.lastGenerated &&
+      current !== this.lastGenerated &&
+      current !== this.lastOriginal
+    ) {
+      this.frozen = true;
+      this.lastSeenValue = current;
+      return;
+    }
+
+    if (this.frozen) {
+      this.lastSeenValue = current;
+      return;
+    }
+
+    this.lastSeenValue = current;
 
     if (!this.configuration.isAutoRewriteEnabled()) {
       return;
     }
 
     if (!this.configuration.isTargetEnabled('commit')) {
+      return;
+    }
+
+    if (!this.configuration.getPersonaId()) {
       return;
     }
 
@@ -89,14 +128,15 @@ export class CommitWatcher implements vscode.Disposable {
   private scheduleRewrite(): void {
     this.clearDebounce();
 
+    const debounceMs = Math.max(this.configuration.getDebounceMs(), MIN_DEBOUNCE_MS);
     this.debounceTimer = setTimeout(() => {
       void this.performRewrite(this.lastOriginal);
-    }, this.configuration.getDebounceMs());
+    }, debounceMs);
   }
 
   private async performRewrite(original: string): Promise<void> {
     const trimmed = original.trim();
-    if (!trimmed) {
+    if (!trimmed || this.isUpdating) {
       return;
     }
 
@@ -105,9 +145,7 @@ export class CommitWatcher implements vscode.Disposable {
       return;
     }
 
-    // Take over the input immediately: this hides whatever raw text is there
-    // (e.g. Cursor's own generated commit) and signals that work is happening,
-    // instead of leaving the user staring at stale text for the ~3s API call.
+    const rewriteGeneration = ++this.generation;
     this.isUpdating = true;
     const placeholder = `${persona.emoji} …`;
     this.repository.inputBox.value = placeholder;
@@ -124,24 +162,43 @@ export class CommitWatcher implements vscode.Disposable {
           }),
       );
 
+      if (rewriteGeneration !== this.generation) {
+        return;
+      }
+
+      const currentValue = this.repository.inputBox.value;
+      if (currentValue !== placeholder) {
+        this.lastSeenValue = currentValue;
+        this.frozen = true;
+        this.lastGenerated = '';
+        return;
+      }
+
       const changed = rewritten.trim().length > 0 && rewritten !== trimmed;
       const finalText = changed ? rewritten : original;
       this.repository.inputBox.value = finalText;
-      this.lastGenerated = changed ? finalText : '';
+      this.lastGenerated = finalText;
       this.lastSeenValue = finalText;
+      this.lastOriginal = finalText;
+      this.frozen = false;
+
       if (changed) {
         await this.recentStore.remember(persona.id);
         this.rewriteFeedback.showRewrote();
       }
     } catch (error) {
-      // Never destroy the user's message on failure — put the original back.
+      if (rewriteGeneration !== this.generation) {
+        return;
+      }
+
       this.repository.inputBox.value = original;
       this.lastSeenValue = original;
       this.lastGenerated = '';
-      const message = error instanceof Error ? error.message : String(error);
-      void vscode.window.showErrorMessage(`Quackie rewrite failed: ${message}`);
+      void showRewriteError(error);
     } finally {
-      this.isUpdating = false;
+      if (rewriteGeneration === this.generation) {
+        this.isUpdating = false;
+      }
     }
   }
 
@@ -149,6 +206,7 @@ export class CommitWatcher implements vscode.Disposable {
     this.clearDebounce();
     this.lastOriginal = '';
     this.lastGenerated = '';
+    this.frozen = false;
   }
 
   private clearDebounce(): void {

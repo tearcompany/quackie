@@ -21,7 +21,7 @@ export class RewriteFeedback implements vscode.Disposable {
 
   showRewrote(): void {
     this.clearTimer();
-    this.statusBarItem.text = 'quackie rewrote';
+    this.statusBarItem.text = '$(check) Quackie rewrote your commit';
     this.statusBarItem.tooltip = 'Quackie updated your commit message';
     this.statusBarItem.show();
     this.hideTimer = setTimeout(() => {
