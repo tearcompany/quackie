@@ -1,3 +1,4 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { Configuration } from './config/Configuration';
 import { CommitWatcher } from './git/CommitWatcher';
@@ -7,11 +8,36 @@ import { PersonaRecentStore } from './personas/PersonaRecentStore';
 import { PersonaRegistry } from './personas/PersonaRegistry';
 import { MockRewriteService } from './rewrite/MockRewriteService';
 import { QuackieRewriteService } from './rewrite/QuackieRewriteService';
+import { InstallTokenClient } from './rewrite/InstallTokenClient';
+import { InstallTokenStore } from './rewrite/InstallTokenStore';
 import { RewriteService } from './rewrite/RewriteService';
 import { RewriteServiceRouter } from './rewrite/RewriteServiceRouter';
 import { runPersonaCommitFlow } from './ui/PersonaCommitFlow';
 import { PersonaStatusBar, showPersonaPicker } from './ui/PersonaStatusBar';
 import { RewriteFeedback } from './ui/RewriteFeedback';
+
+async function pickRepository(
+  repositories: Map<string, Repository>,
+  title: string,
+): Promise<Repository | undefined> {
+  const all = [...repositories.values()];
+  if (all.length <= 1) {
+    return all[0];
+  }
+
+  const items = all.map((repository) => ({
+    label: path.basename(repository.rootUri.fsPath),
+    description: repository.rootUri.fsPath,
+    repository,
+  }));
+
+  const selected = await vscode.window.showQuickPick(items, {
+    title,
+    placeHolder: 'Multiple Git repositories are open — pick one',
+  });
+
+  return selected?.repository;
+}
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const configuration = new Configuration();
@@ -19,8 +45,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const recentStore = new PersonaRecentStore(context);
   await personaRegistry.reload();
 
+  const installTokenStore = new InstallTokenStore(context);
+  const installTokenClient = new InstallTokenClient(configuration, installTokenStore);
   const mockRewriteService = new MockRewriteService(personaRegistry);
-  const quackieRewriteService = new QuackieRewriteService(personaRegistry, configuration);
+  const quackieRewriteService = new QuackieRewriteService(
+    personaRegistry,
+    configuration,
+    installTokenClient,
+  );
   const rewriteService: RewriteService = new RewriteServiceRouter(
     configuration,
     mockRewriteService,
@@ -29,10 +61,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const rewriteFeedback = new RewriteFeedback();
   const gitWatcher = new GitWatcher();
-  const statusBar = new PersonaStatusBar(personaRegistry);
+  const statusBar = new PersonaStatusBar(personaRegistry, configuration);
 
   const watchers = new Map<string, CommitWatcher>();
   const repositories = new Map<string, Repository>();
+
+  const disposeAllWatchers = (): void => {
+    for (const watcher of watchers.values()) {
+      watcher.dispose();
+    }
+    watchers.clear();
+    repositories.clear();
+  };
+
+  context.subscriptions.push({ dispose: disposeAllWatchers });
 
   const attach = (repository: Repository): void => {
     const key = repository.rootUri.toString();
@@ -87,23 +129,54 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       );
     }),
     vscode.commands.registerCommand('quackie.rewriteNow', async () => {
-      for (const watcher of watchers.values()) {
-        await watcher.rewriteNow();
+      if (repositories.size === 0) {
+        return;
+      }
+
+      const withDraft = [...repositories.entries()].filter(([, repository]) =>
+        repository.inputBox.value.trim(),
+      );
+
+      if (withDraft.length === 1) {
+        await watchers.get(withDraft[0][0])?.rewriteNow();
+        return;
+      }
+
+      if (withDraft.length > 1) {
+        const picked = await pickRepository(
+          new Map(withDraft.map(([key, repository]) => [key, repository])),
+          'Quackie: Rewrite Now',
+        );
+        if (picked) {
+          await watchers.get(picked.rootUri.toString())?.rewriteNow();
+        }
+        return;
+      }
+
+      const repository = await pickRepository(repositories, 'Quackie: Rewrite Now');
+      if (repository) {
+        await watchers.get(repository.rootUri.toString())?.rewriteNow();
       }
     }),
     vscode.commands.registerCommand('quackie.commitWithPersona', async () => {
-      const repository = repositories.values().next().value;
-      if (!repository) {
+      if (repositories.size === 0) {
         void vscode.window.showWarningMessage('Quackie: no Git repository found');
         return;
       }
 
+      const repository = await pickRepository(repositories, 'Quackie: Commit with Persona');
+      if (!repository) {
+        return;
+      }
+
+      const key = repository.rootUri.toString();
       await runPersonaCommitFlow(
         repository,
         personaRegistry,
         recentStore,
         rewriteService,
         rewriteFeedback,
+        watchers.get(key),
       );
     }),
   );

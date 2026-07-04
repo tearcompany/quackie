@@ -1,16 +1,47 @@
 {
   "name": "quackie",
   "displayName": "Quackie",
-  "description": "Personality-first rewrite runtime for VS Code",
-  "version": "0.2.0",
+  "description": "Rewrite your Git commit messages in the voice of 40 developer personas — dry seniors, sarcastic ducks, grim doomers, and more. Install once, pick a persona, commit as usual.",
+  "version": "0.2.4",
   "publisher": "quackie",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tearcompany/quackie.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tearcompany/quackie/issues"
+  },
+  "homepage": "https://quackie.me",
   "icon": "icon.png",
+  "galleryBanner": {
+    "color": "#0a0a0f",
+    "theme": "dark"
+  },
+  "keywords": [
+    "git",
+    "commit",
+    "commit message",
+    "conventional commits",
+    "source control",
+    "scm",
+    "ai",
+    "persona",
+    "personality",
+    "productivity"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
     "Other"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true,
+      "description": "Quackie rewrites commit messages locally or via the configured Quackie API. No workspace secrets are read."
+    }
+  },
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -38,7 +69,8 @@
       },
       {
         "command": "quackie.commitWithPersona",
-        "title": "Quackie: Commit with Persona"
+        "title": "Quackie: Commit with Persona",
+        "icon": "$(sparkle)"
       }
     ],
     "keybindings": [
@@ -49,6 +81,15 @@
         "when": "scmProvider == git"
       }
     ],
+    "menus": {
+      "scm/title": [
+        {
+          "command": "quackie.commitWithPersona",
+          "when": "scmProvider == git",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "Quackie",
       "properties": {
@@ -65,44 +106,26 @@
         "quackie.debounceMs": {
           "type": "number",
           "default": 500,
-          "minimum": 100,
+          "minimum": 250,
           "description": "Debounce delay in milliseconds before rewriting"
-        },
-        "quackie.rewriteEngine": {
-          "type": "string",
-          "enum": [
-            "mock",
-            "quackie"
-          ],
-          "enumDescriptions": [
-            "Deterministic offline rewrite, no network calls",
-            "Rewrite via the hosted Quackie API (quackie.apiUrl) — no API key required"
-          ],
-          "default": "quackie",
-          "description": "Rewrite engine used to generate persona-styled text"
         },
         "quackie.apiUrl": {
           "type": "string",
           "default": "https://quackie.me/api/rewrite",
-          "description": "Quackie backend endpoint used by the quackie rewrite engine"
+          "description": "Quackie rewrite API endpoint"
         },
         "quackie.enabledTargets": {
           "type": "array",
           "items": {
             "type": "string",
             "enum": [
-              "commit",
-              "pull-request",
-              "code-review",
-              "release-notes",
-              "branch-name",
-              "changelog"
+              "commit"
             ]
           },
           "default": [
             "commit"
           ],
-          "description": "Rewrite targets enabled for the runtime"
+          "description": "Rewrite targets enabled for the runtime (commit only in v0.2)"
         }
       }
     }

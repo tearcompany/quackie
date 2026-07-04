@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { Configuration } from '../config/Configuration';
 import { isPersonaPackId, PERSONA_PACK_LABELS } from '../personas/packs';
 import { PersonaRecentStore } from '../personas/PersonaRecentStore';
 import { PersonaRegistry } from '../personas/PersonaRegistry';
@@ -8,7 +9,10 @@ export class PersonaStatusBar implements vscode.Disposable {
   private readonly statusBarItem: vscode.StatusBarItem;
   private readonly disposables: vscode.Disposable[] = [];
 
-  constructor(private readonly personaRegistry: PersonaRegistry) {
+  constructor(
+    private readonly personaRegistry: PersonaRegistry,
+    private readonly configuration: Configuration,
+  ) {
     this.statusBarItem = vscode.window.createStatusBarItem(
       vscode.StatusBarAlignment.Left,
       100,
@@ -18,6 +22,7 @@ export class PersonaStatusBar implements vscode.Disposable {
     this.disposables.push(
       this.statusBarItem,
       this.personaRegistry.onDidChange(() => this.refresh()),
+      this.configuration.onDidChange(() => this.refresh()),
     );
 
     this.refresh();
@@ -31,20 +36,23 @@ export class PersonaStatusBar implements vscode.Disposable {
   }
 
   private refresh(): void {
+    const autoRewriteState = this.configuration.isAutoRewriteEnabled()
+      ? 'Auto-rewrite: on'
+      : 'Auto-rewrite: off';
+
     const current = this.personaRegistry.getCurrent();
     if (!current) {
       this.statusBarItem.text = 'Quackie';
-      this.statusBarItem.tooltip = 'Select Quackie persona';
+      this.statusBarItem.tooltip = `Select Quackie persona. ${autoRewriteState}.`;
       return;
     }
 
     const packLabel = isPersonaPackId(current.pack)
       ? PERSONA_PACK_LABELS[current.pack]
       : current.pack;
+    const voicePart = current.voice ? ` — ${current.voice}` : '';
     this.statusBarItem.text = `${current.emoji} ${current.name}`;
-    this.statusBarItem.tooltip = current.voice
-      ? `${current.name} (${packLabel}) — ${current.voice}. Click to change persona.`
-      : `${current.name} (${packLabel}). Click to change persona.`;
+    this.statusBarItem.tooltip = `${current.name} (${packLabel})${voicePart}. Click to change persona. ${autoRewriteState}.`;
   }
 }
 

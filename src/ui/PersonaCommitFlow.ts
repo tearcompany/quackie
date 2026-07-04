@@ -1,10 +1,12 @@
 import * as vscode from 'vscode';
+import { CommitWatcher } from '../git/CommitWatcher';
 import { Repository } from '../git/api/git';
 import { PersonaRecentStore } from '../personas/PersonaRecentStore';
 import { PersonaRegistry } from '../personas/PersonaRegistry';
 import { RewriteService } from '../rewrite/RewriteService';
 import { pickPersona } from './PersonaPicker';
 import { RewriteFeedback } from './RewriteFeedback';
+import { showRewriteError } from './showRewriteError';
 
 export async function runPersonaCommitFlow(
   repository: Repository,
@@ -12,6 +14,7 @@ export async function runPersonaCommitFlow(
   recentStore: PersonaRecentStore,
   rewriteService: RewriteService,
   rewriteFeedback: RewriteFeedback,
+  watcher?: CommitWatcher,
 ): Promise<void> {
   const draft = repository.inputBox.value.trim() || (await promptForDraft());
   if (!draft) {
@@ -37,17 +40,17 @@ export async function runPersonaCommitFlow(
         }),
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    void vscode.window.showErrorMessage(`Quackie rewrite failed: ${message}`);
+    void showRewriteError(error);
     return;
   }
 
-  const accepted = await confirmRewrite(persona.emoji, persona.name, draft, rewritten);
+  const accepted = await confirmRewrite(persona.emoji, persona.name, rewritten);
   if (!accepted) {
     return;
   }
 
   repository.inputBox.value = rewritten;
+  watcher?.markGenerated(rewritten);
   rewriteFeedback.showRewrote();
   void vscode.commands.executeCommand('workbench.view.scm');
 }
@@ -62,15 +65,9 @@ async function promptForDraft(): Promise<string | undefined> {
   return trimmed ? trimmed : undefined;
 }
 
-async function confirmRewrite(
-  emoji: string,
-  name: string,
-  original: string,
-  rewritten: string,
-): Promise<boolean> {
+async function confirmRewrite(emoji: string, name: string, rewritten: string): Promise<boolean> {
   const choice = await vscode.window.showInformationMessage(
-    `${emoji} ${name} rewrite ready`,
-    { modal: true, detail: `${original}\n\n→\n\n${rewritten}` },
+    `${emoji} ${name}: ${rewritten}`,
     'Use rewrite',
     'Cancel',
   );

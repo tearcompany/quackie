@@ -1,9 +1,12 @@
 import { Configuration } from '../config/Configuration';
 import { PersonaMetadata } from '../personas/types';
 import { PersonaRegistry } from '../personas/PersonaRegistry';
+import { InstallTokenClient } from './InstallTokenClient';
 import { getPersonaMaxLength, truncateToWordBoundary } from './personaLimits';
 import { RewriteService } from './RewriteService';
 import { RewriteRequest } from './types';
+
+const REQUEST_TIMEOUT_MS = 30_000;
 
 interface QuackieApiRequestBody {
   persona: string;
@@ -20,40 +23,66 @@ interface QuackieApiResponseBody {
   error?: string;
 }
 
-/**
- * Calls Quackie's own backend, which holds the real model credentials and
- * forwards requests to the underlying rewrite model. The extension never
- * sees or stores any API key — see app/api/rewrite/route.ts in the
- * quackie-marketing-landing-page project for the server side.
- */
 export class QuackieRewriteService implements RewriteService {
   constructor(
     private readonly personaRegistry: PersonaRegistry,
     private readonly configuration: Configuration,
+    private readonly installTokenClient: InstallTokenClient,
   ) {}
 
   async rewrite(request: RewriteRequest): Promise<string> {
     const metadata = this.personaRegistry.getMetadata(request.persona);
     const apiUrl = this.configuration.getApiUrl();
+    const body = this.buildRequestBody(request, metadata);
 
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(this.buildRequestBody(request, metadata)),
-    });
+    let token = await this.installTokenClient.getToken();
+    let response = await this.postRewrite(apiUrl, body, token);
 
-    const body = (await response.json().catch(() => ({}))) as QuackieApiResponseBody;
-
-    if (!response.ok) {
-      throw new Error(body.error ?? `Quackie API request failed (${response.status})`);
+    if (response.status === 401) {
+      token = await this.installTokenClient.clearAndRefresh();
+      response = await this.postRewrite(apiUrl, body, token);
     }
 
-    if (!body.text) {
+    const responseBody = (await response.json().catch(() => ({}))) as QuackieApiResponseBody;
+
+    if (!response.ok) {
+      throw new Error(responseBody.error ?? `Quackie API request failed (${response.status})`);
+    }
+
+    if (!responseBody.text) {
       throw new Error('Quackie API returned an empty rewrite');
     }
 
     const maxLength = getPersonaMaxLength(metadata);
-    return truncateToWordBoundary(body.text.trim(), maxLength);
+    return truncateToWordBoundary(responseBody.text.trim(), maxLength);
+  }
+
+  private async postRewrite(
+    apiUrl: string,
+    body: QuackieApiRequestBody,
+    token: string,
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    try {
+      return await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('Quackie rewrite timed out. Check your connection and try again.');
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   private buildRequestBody(
